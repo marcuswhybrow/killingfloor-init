@@ -1,0 +1,201 @@
+#!/bin/bash
+
+### BEGIN INIT INFO
+# Provides:   minecraft
+# Required-Start: $local_fs $remote_fs
+# Required-Stop:  $local_fs $remote_fs
+# Should-Start:   $network
+# Should-Stop:    $network
+# Default-Start:  2 3 4 5
+# Default-Stop:   0 1 6
+# Short-Description:    Killing Floor Server
+# Description:    Init script for Killing Floor server
+### END INIT INFO
+
+# Created by Marcus Whybrow
+VERSION="0.1.0"
+
+
+# Screen and usernames
+# --------------------
+
+# Name to use for the screen instance
+SCREEN="killingfloor"
+# User that should run the server
+USERNAME="killingfloor"
+
+
+# Paths and locations
+# -------------------
+
+# Path to Killing Floor binaries (without trailing slash)
+BINPATH="/opt/killingfloor/server"
+# The server system directory
+SYSTEMPATH="$BINPATH/system"
+# Absolute path to a KillingFloor.ini file
+INI="$SYSTEMPATH/KillingFloor.ini"
+
+
+# SteamCMD
+# --------
+
+# The command (string) used to execute steamcmd
+STEAMCMD="STEAMEXE=steamcmd /opt/steamcmd/steam.sh"
+# The KillingFloor steam app id
+STEAM_KF_APP_ID="215360"
+# The path to the file containing your steam login credentials
+# The file shoud contain two lines:
+#     username=yourUserName
+#     password=yourPassword
+STEAM_CREDS_PATH="/opt/steamcmd/credentials.txt"
+
+
+# Server Configuration
+# --------------------
+
+GAMETYPE="KFMod.KFGameType"
+VAC="true"
+MAXPLAYERS="6"
+MAP="KF-BioticsLab.rom"
+INVOCATION="./ucc-bin server $MAP?game=$GAMETYPE?VACSecured=$VAC?MaxPlayers=$MAXPLAYERS -nohomedir ini=$INI"
+
+
+# Functions
+# ---------
+
+as_user() {
+	if [ "$(whoami)" == "$USERNAME" ] ; then
+		bash -c "$1"
+	else
+		su - $USERNAME -c "$1"
+	fi
+}
+
+steam_get_creds() {
+	if [ -f "$STEAM_CREDS_PATH" ]; then
+		while read line; do
+			if [[ "$line" =~ ^username=(.*)$ ]]; then
+				STEAM_USER="${BASH_REMATCH[1]}"
+				continue
+			fi
+			if [[ "$line" =~ ^password=(.*)$ ]]; then
+				STEAM_PASSWORD="${BASH_REMATCH[1]}"
+				continue
+			fi
+		done < "$STEAM_CREDS_PATH"
+	fi
+
+	# If the steam username and password are still not set
+	if [ -z "$STEAM_USER" ] || [ -z "$STEAM_PASSWORD" ]; then
+		echo "Could not read steam username and password from $STEAM_CREDS_PATH"
+		exit 1
+	fi
+}
+
+server_get_pid() {
+	ps ax | grep -v grep | grep SCREEN | grep $INI | awk '{print $1}'
+}
+
+server_is_running() {
+	if ps ax | grep -v grep | grep -v -i SCREEN | grep $INI > /dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+server_start() {
+	if server_is_running; then
+		echo "Tried to start but $INI was already running!"
+	else
+		echo "$INI was not running... starting."
+		cd $SYSTEMPATH
+		as_user "cd $SYSTEMPATH && screen -dmS $SCREEN $INVOCATION"
+		sleep 5
+		if server_is_running; then
+			echo "$INI is now running."
+		else
+			echo "Could not start $INI."
+		fi
+	fi
+}
+
+server_stop() {
+	if server_is_running; then
+		echo "$INI is running... stopping."
+		kill `ps ax | grep -v grep | grep SCREEN | grep $INI | awk '{print $1}'`
+		sleep 1
+		
+		if server_is_running; then
+			kill $(server_get_pid)
+		fi
+	else
+		echo "$INI was not running."
+	fi
+	
+	if server_is_running; then
+		echo "$INI could not be shut down... still running."
+	else
+		echo "$INI is shut down."
+	fi
+}
+
+server_update() {
+	steam_get_creds
+	as_user "$STEAMCMD +login $STEAM_USER $STEAM_PASSWORD +force_install_dir $BINPATH +app_update $STEAM_KF_APP_ID validate +exit"
+}
+
+
+# Options
+# -------
+
+case "$1" in
+	start)
+		# Starts the server
+		server_start
+		;;
+	stop)
+		# Stops the server
+		server_stop
+		;;
+	restart)
+		# Restarts the server
+		server_stop
+		echo "Waiting 5 seconds to be sure the server has stopped..."
+		sleep 5
+		server_start
+		;;
+	update)
+		server_stop
+		echo "Waiting 5 seconds to be sure the server has stopped..."
+		sleep 5
+		server_update
+		server_start
+		;;
+	status)
+		if server_is_running; then
+			echo "$INI is running."
+		else
+			echo "$INI is stopped."
+		fi
+		;;
+	version)
+		echo "Version $VERSION"
+		;;
+	help)
+		echo "Usage: $0 command"
+		echo 
+		echo "start    Starts the server"
+		echo "stop     Stops the server"
+		echo "restart  Restarts the server"
+		echo "status   Displays whether the server is running"
+		echo "update   Updates the Killing Floor server via steam"
+		echo "version  Displays the version of this script"
+		;;
+	*)
+		echo "No such command see $0 help"
+		exit 1
+		;;
+esac
+
+exit 0
